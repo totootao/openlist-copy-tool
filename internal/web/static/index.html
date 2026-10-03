@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenList 115→115 复制工具</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; background: #f4f6f8; color: #222; }
+  header { background: #1f2937; color: #fff; padding: 14px 20px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header small { opacity: .7; }
+  .wrap { max-width: 1200px; margin: 16px auto; padding: 0 16px; }
+  .paths { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .path-box { flex: 1; min-width: 280px; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; }
+  .path-box label { font-size: 12px; color: #64748b; display:block; margin-bottom: 4px; }
+  .path-box input { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; font-size: 14px; }
+  .path-box.src { border-top: 3px solid #2563eb; }
+  .path-box.dst { border-top: 3px solid #16a34a; }
+  .panes { display: flex; gap: 12px; }
+  .pane { flex: 1; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; min-height: 360px; display: flex; flex-direction: column; }
+  .pane h2 { margin: 0; padding: 10px 12px; font-size: 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display:flex; justify-content: space-between; align-items:center; }
+  .pane h2 .tag { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+  .pane.src .tag { background: #dbeafe; color: #1d4ed8; }
+  .pane.dst .tag { background: #dcfce7; color: #15803d; }
+  .crumbs { padding: 8px 12px; font-size: 13px; color: #475569; border-bottom: 1px solid #f1f5f9; word-break: break-all; }
+  .crumbs span { cursor: pointer; color: #2563eb; }
+  .crumbs span:hover { text-decoration: underline; }
+  .list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; flex: 1; }
+  .list li { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+  .list li:hover { background: #f1f5f9; }
+  .list li .name { display: flex; align-items: center; gap: 8px; }
+  .list li .ico { color: #f59e0b; }
+  .list li button { font-size: 12px; padding: 4px 10px; border: none; border-radius: 6px; cursor: pointer; background: #e2e8f0; color: #334155; }
+  .list li button.primary { background: #2563eb; color: #fff; }
+  .list li button.green { background: #16a34a; color: #fff; }
+  .loading { padding: 20px; color: #94a3b8; text-align: center; }
+  .actions { margin: 14px 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { background: #1f2937; color: #fff; border: none; padding: 10px 18px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn.ghost { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
+  .jobs { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; }
+  .jobs h2 { margin: 0 0 10px; font-size: 15px; }
+  .job { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .job .meta { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .b-running { background: #dbeafe; color: #1d4ed8; }
+  .b-done { background: #dcfce7; color: #15803d; }
+  .b-error { background: #fee2e2; color: #b91c1c; }
+  .b-pending { background: #f1f5f9; color: #475569; }
+  .b-cooldown { background: #fef3c7; color: #b45309; }
+  .progress { height: 8px; background: #e2e8f0; border-radius: 999px; overflow: hidden; margin: 6px 0; }
+  .progress > div { height: 100%; background: #2563eb; transition: width .3s; }
+  .log { font-size: 12px; color: #64748b; max-height: 120px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; }
+  .hint { font-size: 12px; color: #94a3b8; }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast.show { opacity: .95; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenList 115→115 复制工具 <small>（内置防风控：限速 / 分批 / 冷却 / 断点续传）</small></h1>
+</header>
+
+<div class="wrap">
+  <div class="paths">
+    <div class="path-box src">
+      <label>源目录（FROM）</label>
+      <input id="srcPath" placeholder="例如 /115A/电影" readonly>
+    </div>
+    <div class="path-box dst">
+      <label>目标目录（TO）</label>
+      <input id="dstPath" placeholder="例如 /115B/电影" readonly>
+    </div>
+  </div>
+
+  <div class="panes">
+    <div class="pane src">
+      <h2>源浏览器 <span class="tag">选择源</span></h2>
+      <div class="crumbs" id="srcCrumbs"></div>
+      <ul class="list" id="srcList"><li class="loading">加载中…</li></ul>
+    </div>
+    <div class="pane dst">
+      <h2>目标浏览器 <span class="tag">选择目标</span></h2>
+      <div class="crumbs" id="dstCrumbs"></div>
+      <ul class="list" id="dstList"><li class="loading">加载中…</li></ul>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="startBtn" disabled>开始复制</button>
+    <button class="btn ghost" id="refreshBtn">刷新当前目录</button>
+    <span class="hint" id="hint">请分别在左右两侧浏览并「选为源」「选为目标」</span>
+  </div>
+
+  <div class="jobs">
+    <h2>任务列表</h2>
+    <div id="jobsList"><span class="hint">暂无任务</span></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const srcState = { path: "/" };
+const dstState = { path: "/" };
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2200);
+}
+
+function goUp(path) {
+  if (path === "/" || path === "") return "/";
+  const i = path.replace(/\/$/, "").lastIndexOf("/");
+  return i <= 0 ? "/" : path.slice(0, i);
+}
+
+async function loadPane(side) {
+  const state = side === "src" ? srcState : dstState;
+  const listEl = document.getElementById(side + "List");
+  const crumbsEl = document.getElementById(side + "Crumbs");
+  listEl.innerHTML = '<li class="loading">加载中…</li>';
+  try {
+    const res = await fetch("/api/list?path=" + encodeURIComponent(state.path));
+    const data = await res.json();
+    if (data.error) { listEl.innerHTML = '<li class="loading">' + data.error + '</li>'; return; }
+    // 面包屑
+    const parts = data.path.split("/").filter(Boolean);
+    let html = '<span data-p="/">根</span>';
+    let acc = "";
+    for (const p of parts) {
+      acc += "/" + p;
+      html += ' / <span data-p="' + acc + '">' + p + '</span>';
+    }
+    crumbsEl.innerHTML = html;
+    crumbsEl.querySelectorAll("span[data-p]").forEach(s => {
+      s.onclick = () => { state.path = s.getAttribute("data-p"); loadPane(side); };
+    });
+    // 目录列表
+    if (!data.dirs || data.dirs.length === 0) {
+      listEl.innerHTML = '<li class="loading">（空目录）</li>';
+    } else {
+      listEl.innerHTML = "";
+      data.dirs.forEach(d => {
+        const li = document.createElement("li");
+        const nm = document.createElement("div");
+        nm.className = "name";
+        nm.innerHTML = '<span class="ico">📁</span><span>' + d.name + '</span>';
+        nm.onclick = () => { state.path = data.path.replace(/\/$/, "") + "/" + d.name; loadPane(side); };
+        const btn = document.createElement("button");
+        if (side === "src") { btn.className = "primary"; btn.textContent = "选为源"; btn.onclick = (e) => { e.stopPropagation(); document.getElementById("srcPath").value = data.path.replace(/\/$/, "") + "/" + d.name; updateStart(); }; }
+        else { btn.className = "green"; btn.textContent = "选为目标"; btn.onclick = (e) => { e.stopPropagation(); document.getElementById("dstPath").value = data.path.replace(/\/$/, "") + "/" + d.name; updateStart(); }; }
+        li.appendChild(nm); li.appendChild(btn);
+        listEl.appendChild(li);
+      });
+    }
+  } catch (e) {
+    listEl.innerHTML = '<li class="loading">请求失败：' + e.message + '</li>';
+  }
+}
+
+function updateStart() {
+  const s = document.getElementById("srcPath").value;
+  const d = document.getElementById("dstPath").value;
+  document.getElementById("startBtn").disabled = !(s && d);
+  document.getElementById("hint").textContent = (s && d) ? ("将复制 " + s + " → " + d) : "请分别在左右两侧浏览并选择目录";
+}
+
+document.getElementById("refreshBtn").onclick = () => { loadPane("src"); loadPane("dst"); };
+
+document.getElementById("startBtn").onclick = async () => {
+  const src = document.getElementById("srcPath").value;
+  const dst = document.getElementById("dstPath").value;
+  if (!src || !dst) return;
+  const res = await fetch("/api/copy", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ src_dir: src, dst_dir: dst })
+  });
+  const data = await res.json();
+  if (data.error) toast("失败：" + data.error);
+  else { toast("任务已创建：" + data.job_id); pollJobs(); }
+};
+
+async function pollJobs() {
+  try {
+    const res = await fetch("/api/jobs");
+    const jobs = await res.json();
+    const el = document.getElementById("jobsList");
+    if (!jobs || jobs.length === 0) { el.innerHTML = '<span class="hint">暂无任务</span>'; return; }
+    el.innerHTML = "";
+    jobs.slice().reverse().forEach(j => {
+      const pct = j.total > 0 ? Math.round(j.processed / j.total * 100) : 0;
+      const div = document.createElement("div");
+      div.className = "job";
+      div.innerHTML =
+        '<div class="meta"><span>' + j.src_dir + ' → ' + j.dst_dir + '</span>' +
+        '<span class="badge b-' + j.status + '">' + j.status + '</span></div>' +
+        '<div class="progress"><div style="width:' + pct + '%"></div></div>' +
+        '<div class="hint">进度 ' + j.processed + ' / ' + j.total + '</div>' +
+        '<div class="log">' + (j.log || []).slice(-12).join("\\n") + '</div>';
+      el.appendChild(div);
+    });
+  } catch (e) {}
+}
+
+// 初始化
+loadPane("src");
+loadPane("dst");
+setInterval(pollJobs, 3000);
+pollJobs();
+</script>
+</body>
+</html>
